@@ -171,13 +171,10 @@ def main():
     missing_sum = sum(1 for r in recs if not any(r.get(f) for f in SUMMARY_FIELDS))
     if missing_sum:
         warns.add(f"[品質] 要約ブロック13列が空の行が{missing_sum}件(SKILL.md: 要約はエージェントが本編から凝縮して記入)")
-    for i, r in enumerate(recs, 1):
-        for req in ("startup_id", "title", "summary", "score_total", "agent_rationale"):
-            if not r.get(req):
-                warns.add(f"行{i}: 必須フィールド '{req}' が空")
 
     # スコアの自動導出: score_total=9軸平均 / score_sum_*4種=本編スコアの転記。
-    # モデルに算術をさせない(記入値があっても計算値で上書き)。JSONLでは省略してよい
+    # モデルに算術をさせない(記入値があっても計算値で上書き)。JSONLでは省略してよい。
+    # 必須フィールドチェックより前に実行すること(score_total省略時の誤検出を防ぐ)
     MAIN_SCORES = [f for f in SCORE_FIELDS
                    if not f.startswith(("_", "score_sum_")) and f != "score_total"]
     SUM_SCORE_MAP = {"score_sum_uniqueness": "score_novelty",
@@ -198,13 +195,21 @@ def main():
     if n_drv:
         warns.add(f"score_totalを9軸平均で再計算し{n_drv}件を上書き(score_sum_*4種も本編スコアから自動転記)")
 
+    for i, r in enumerate(recs, 1):
+        for req in ("startup_id", "title", "summary", "score_total", "agent_rationale"):
+            if not r.get(req):
+                warns.add(f"行{i}: 必須フィールド '{req}' が空")
+
     # [品質]警告(内容レベル): 書き込みは止めないが、SKILL.md「品質改善パス」の対象行特定に使う。
     # 基準はSKILL.md「出力品質基準」(良品サンプルの実測レンジ)に対応
     import re
     n_abc = n_smry = n_ph = n_ban = n_len = n_title = n_risk = n_int = n_slug = 0
     score_patterns, score_shapes, ranks_seen = set(), set(), set()
     # 「後で埋める」つもりの定型プレースホルダー。空欄(=事実性の鉄則で正)とは別に検出する
-    PLACEHOLDER_RE = re.compile(r"(詳細分析|後で|追って|TBD|todo|要検討|検討中|分析中|予定|要記入|未記入)", re.I)
+    # 「予定」単体は「2026年3月取得予定」等の正当な事実記述にも出るため、
+    # 仮テキストを示す語と組み合わさった場合のみ検出する
+    PLACEHOLDER_RE = re.compile(r"(詳細分析|後で検討|追って|TBD|todo|要検討|検討中|分析中|"
+                                r"詳細分析予定|後日予定|要記入|未記入)", re.I)
     PLACEHOLDER_FIELDS = ("core_improvement", "key_risks", "unused_reason_barriers",
                           "market_size_detail", "cagr_detail")
     # 禁止語(定型文の兆候)と、良品サンプル実測レンジに基づく文字数フロア
@@ -213,10 +218,11 @@ def main():
     LEN_FLOORS = {"summary": 120, "pain": 70, "solution": 80,
                   "idea_strength": 50, "agent_rationale": 150}
     THINK_FIELDS = ("pain", "solution", "idea_strength", "summary", "agent_rationale")
-    # スラッグ漏れ検出で除外する正規の軸名・フィールド名(思考根拠での言及は正当)
+    # スラッグ漏れ検出で除外する正規の軸名・フィールド名(思考根拠での言及は正当)。
+    # score_*系は「score_」を外した省略形(market_size, tech_feasibility等)も本文でよく使われるため両方許容
     LEGIT_TOKENS = sorted(set(list(SCORE_FIELDS) + list(CANONICAL) +
-                              ["asset_fit", "pain_fit", "tech_feasibility", "mission_fit",
-                               "industry_advantage", "industry_pain_fit", "score_total"]),
+                              [f[len("score_"):] for f in SCORE_FIELDS if f.startswith("score_")] +
+                              ["asset_fit", "pain_fit", "score_total"]),
                           key=len, reverse=True)
     LEGIT_RE = re.compile("|".join(re.escape(t) for t in LEGIT_TOKENS if t))
     dup_seen = {}  # (field, 正規化文) -> 出現行数。企業名を差し替えただけのコピペを検出
@@ -233,8 +239,9 @@ def main():
             n_ban += 1
         if any(r.get(f) and len(str(r.get(f))) < floor for f, floor in LEN_FLOORS.items()):
             n_len += 1
-        if "×" in str(r.get("title") or ""):
-            n_title += 1  # タイトルは成果物を名指す(「X × Y」機械結合は不可)
+        if " × " in str(r.get("title") or ""):
+            n_title += 1  # タイトルは成果物を名指す(「企業名 × アセット名」の機械結合は不可。
+                          # スペース無し「Si×SiC」等の技術表記は正当なので対象外
         kr = str(r.get("key_risks") or "")
         if kr and ("①" not in kr or "②" not in kr):
             n_risk += 1  # 主要リスクは①②③の番号列挙で3〜4件

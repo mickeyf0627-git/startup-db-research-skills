@@ -66,6 +66,70 @@ def parse_block(header, row):
     return asset if asset["name"] else None
 
 
+def parse_transcribed_sheet(rows):
+    """build_startup_db.pyが生成した⑤アセット情報シート(転記済み)を逆パースする。
+    元の棚卸しファイルが手元になく、マッチング用xlsxの転記シートしかない場合に使う。
+    先頭列が「■ 名称」で始まるブロックの繰り返し(カテゴリ/成熟度/技術概要 → スペック表 → 機能表 → WANT/NG)。
+    """
+    assets = []
+    asset = None
+    section = None  # "spec" | "func" | None
+    for row in rows:
+        cells = ["" if c is None else str(c).strip() for c in row]
+        c0 = cells[0] if cells else ""
+        if not any(cells):
+            continue
+        if c0.startswith("■ "):
+            if asset and asset["name"]:
+                assets.append(asset)
+            asset = {"asset_id": None, "name": c0[2:].strip(), "category": None,
+                      "maturity": None, "overview": None, "specs": [], "functions": [],
+                      "expansion_wants": [], "ng_conditions": []}
+            asset["asset_id"] = asset["name"]
+            section = None
+            continue
+        if asset is None:
+            continue
+        if c0 == "カテゴリ":
+            asset["category"] = cells[1] if len(cells) > 1 else None
+        elif c0 == "成熟度":
+            asset["maturity"] = cells[1] if len(cells) > 1 else None
+        elif c0 == "技術概要":
+            asset["overview"] = cells[1] if len(cells) > 1 else None
+        elif c0 == "スペック項目":
+            section = "spec"
+        elif c0.startswith("機能(機能グループ"):
+            section = "func"
+        elif c0 == "拡張可能性(WANT)":
+            v = cells[1] if len(cells) > 1 else ""
+            if v:
+                asset["expansion_wants"].append(v)
+        elif c0 == "NG条件":
+            v = cells[1] if len(cells) > 1 else ""
+            if v:
+                asset["ng_conditions"].append(v)
+        elif section == "spec" and c0.startswith("["):
+            m = re.match(r"\[(.+?)\]\s*(.*)", c0)
+            typ, name = (m.group(1), m.group(2)) if m else ("基本", c0)
+            asset["specs"].append({"type": typ, "name": name,
+                                   "value": cells[1] if len(cells) > 1 else None,
+                                   "desc": cells[2] if len(cells) > 2 else None})
+        elif section == "func" and c0:
+            grp, _, fname = c0.partition(" > ")
+            if not fname:
+                grp, fname = "", c0
+            asset["functions"].append({
+                "group": grp, "name": fname,
+                "core": cells[1] if len(cells) > 1 and cells[1] else None,
+                "value": cells[2] if len(cells) > 2 and cells[2] else None,
+                "constraint": cells[3] if len(cells) > 3 and cells[3] else None,
+                "differentiator": cells[4] if len(cells) > 4 and cells[4] else None,
+            })
+    if asset and asset["name"]:
+        assets.append(asset)
+    return assets
+
+
 def parse_form_sheet(rows, sheet_name):
     """記入ページ形式(1.技術概要/2.基本スペック/3.機能分解/4.拡張可能性/5.NG条件)をパース。"""
     asset = {"asset_id": None, "name": None, "category": None, "maturity": None,
@@ -149,6 +213,14 @@ def main():
     assets, seen = [], set()
     for sheet, rows in rows_by_sheet.items():
         if "記載例" in sheet:  # テンプレートの記入例シートはスキップ
+            continue
+        a1 = str(rows[0][0]) if rows and rows[0] and rows[0][0] else ""
+        # 転記済み形式の検出(build_startup_db.pyが生成した⑤アセット情報シート。A1が「アセット情報(N件)」)
+        if "アセット情報" in a1:
+            for asset in parse_transcribed_sheet(rows):
+                if asset["name"] not in seen:
+                    seen.add(asset["name"])
+                    assets.append(asset)
             continue
         # 記入ページ形式の検出(セルに「技術概要」セクション見出しがある)
         flat = " ".join(str(c) for r in rows[:15] for c in r if c)
