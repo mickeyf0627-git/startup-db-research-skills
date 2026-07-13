@@ -1,0 +1,23 @@
+{
+  "_usage": "製造業関連を厚めに取得するためのアドオン。query_default.json の query.bool.must 配列に、下記 'addon' の中身(boolブロック)を1要素として追加して使う。",
+  "addon": {
+    "bool": {
+      "should": [
+        { "terms": { "industry": ["Industrial Automation", "Machinery Manufacturing", "Automation Machinery Manufacturing", "Semiconductors", "Semiconductor Manufacturing", "Robotics Engineering", "Motor Vehicle Manufacturing", "Motor Vehicle Parts Manufacturing", "Appliances, Electrical, and Electronics Manufacturing"] } },
+        { "query_string": { "query": "robotics OR \"machine vision\" OR \"predictive maintenance\" OR \"surrogate model\" OR \"simulation\" OR \"CAE\" OR \"digital twin\" OR \"edge AI\" OR \"materials informatics\" OR \"thermal management\" OR \"power electronics\" OR \"in-cabin sensing\" OR \"driver monitoring\" OR \"industrial automation\" OR \"additive manufacturing\" OR \"quality inspection\"", "default_field": "description", "default_operator": "or" } },
+        { "query_string": { "query": "robotics OR \"machine vision\" OR \"predictive maintenance\" OR simulation OR \"digital twin\" OR \"edge AI\" OR \"materials informatics\" OR \"thermal management\" OR \"power electronics\" OR \"driver monitoring\" OR \"industrial automation\" OR \"quality inspection\"", "default_field": "categories_and_keywords", "default_operator": "or" } }
+      ],
+      "minimum_should_match": 1
+    }
+  },
+  "_mfg_tech_categories_keywords": {
+    "AI・データ(シミュレーション/CAE)": "surrogate model, physics-informed, simulation acceleration, CAE, generative design, topology optimization",
+    "センシング": "in-cabin sensing, driver monitoring, DMS, occupant monitoring, radar sensing, vital sign monitoring, event-based vision",
+    "検査・品質": "visual inspection, defect detection, quality inspection, anomaly detection, machine vision",
+    "予知保全": "predictive maintenance, condition monitoring, vibration analysis, machine health",
+    "ロボティクス・FA": "industrial robotics, robot foundation model, bin picking, gripper, AMR, warehouse automation",
+    "エッジAI": "edge AI, AI accelerator, inference chip, neural processing unit, TinyML",
+    "材料・MI": "materials informatics, materials discovery, computational chemistry, battery materials",
+    "熱・パワエレ": "thermal management, thermal interface material, power semiconductor, GaN, SiC, wide bandgap"
+  }
+}

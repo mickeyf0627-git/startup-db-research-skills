@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# 実行時の生成物・機密
+output/
+APIキー.txt
+*.tmp
+~$*.xlsx

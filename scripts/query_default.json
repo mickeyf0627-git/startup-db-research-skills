@@ -1,0 +1,36 @@
+{
+  "query": {
+    "bool": {
+      "must": [
+        {
+          "range": {
+            "founded_year": {
+              "gte": 2016
+            }
+          }
+        },
+        {
+          "range": {
+            "employees_count": {
+              "lte": 500
+            }
+          }
+        },
+        {
+          "range": {
+            "last_funding_round.announced_date": {
+              "gte": "2024-01-01"
+            }
+          }
+        }
+      ],
+      "must_not": [
+        {
+          "term": {
+            "is_public": true
+          }
+        }
+      ]
+    }
+  }
+}
