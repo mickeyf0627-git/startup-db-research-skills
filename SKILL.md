@@ -173,7 +173,7 @@ description: 3つの能力を持つスキル。①スタートアップDB作成(
 
 ### マッチングJSONLの正規スキーマ(このフィールド名以外を使わない)
 
-ペア生成エージェントには**下記のフィールド名をそのまま**指示に含めること(独自の英語名を発明させない)。No・自己評価ランク・総合スコア(一覧)・DB転記4列はExcel生成時に自動導出されるため**JSONLに書かない**。
+ペア生成エージェントには**下記のフィールド名をそのまま**指示に含めること(独自の英語名を発明させない)。No・自己評価ランク・総合スコア(一覧)・DB転記4列はExcel生成時に自動導出されるため**JSONLに書かない**。さらに **`score_total`(9軸平均)と`score_sum_*`4種(本編スコアの転記)は`update_matching_in_excel.py`が自動計算する**ため省略してよい(書いても計算値で上書きされる。モデルに算術をさせない)。
 
 ```
 startup_id, startup_name, asset_id, coop_type, title, tags, summary,
@@ -254,7 +254,9 @@ score_sum_uniqueness, score_sum_mission, score_sum_market_size, score_sum_growth
 
 ## 能力2の品質改善パス(再生成・要約充足) — 最大3回まで
 
-④生成後の検証(`update_matching_in_excel.py --check-only`)で**[品質]警告**(a/b/c判定なし・定型文の概要・薄い思考根拠・全行同一スコア・要約13列欠落・**採用障壁/改善点/主要リスク/市場規模詳細等の定型プレースホルダー残り**)が出た場合、またはユーザーが再生成・要約充足を指示した場合に実行する。
+④生成後の検証(`update_matching_in_excel.py --check-only`)で**[品質]警告**が出た場合、またはユーザーが再生成・要約充足を指示した場合に実行する。検証は「出力品質基準」を内容レベルで機械チェックする: a/b/c判定なし/概要が定型文/**禁止語**(相乗効果・技術融合等)/**文字数が基準レンジ未満**/**タイトルが「X × Y」機械結合**/**主要リスクが①②列挙でない**/**スコアが非整数・等差列・全行同一ランク**/**行間コピペ**(企業名差し替えの定型量産)/**英語スラッグ漏れ**/要約13列欠落/**定型プレースホルダー残り**(「詳細分析」「予定」等)。
+
+**初回生成もパス1と数え、パス内で完結させる**: 生成 → `--check-only` → 警告の対象行をその場で修正 → 再検証 → 書き込み。「書いてから次のパスで直す」を繰り返すと3回で収束しない。
 
 **採用障壁(`unused_reason_barriers`)・改善点(`core_improvement`)・主要リスク(`key_risks`)は必ず中身を書く**。「詳細分析が必要」「後で検討」等の仮テキストで埋めてはならない(検証で[品質]警告になる)。事実が不明で書けないなら**空欄**にする(空欄は正、仮テキストは不正)。市場規模詳細/CAGR詳細は出典が取れた場合のみ記入し、取れなければ空欄。
 
@@ -310,7 +312,7 @@ python scripts/build_matching_html.py --in <xlsx> --out <html> [--title "..."] [
 | `scripts/read_assets.py` | 技術アセット棚卸しExcel/CSVのパース→assets.json |
 | `scripts/validate_db.py` | JSONLの機械検証+安全な自動補正(--fix)。**Excel生成前に必ず実行** |
 | `scripts/build_startup_db.py` | JSONL→Excel生成(①〜③、`--matching`指定で④も)。`--template`でテンプレート再生成 |
-| `scripts/update_matching_in_excel.py` | 既存のマッチング用xlsxの**④シートだけ**をマッチングJSONLから正規フォーマットで再生成(③から転記4列を自動結合、asset_idは⑤の名称に解決)。`--check-only`で書き込み前検証+**[品質]警告**(a/b/c判定なし・定型文・スコア均一・要約欠落・定型プレースホルダー残り=品質改善パスの対象特定)。④の手書き編集は禁止 |
+| `scripts/update_matching_in_excel.py` | 既存のマッチング用xlsxの**④シートだけ**をマッチングJSONLから正規フォーマットで再生成(③から転記4列を自動結合、asset_idは⑤の名称に解決)。`--check-only`で書き込み前検証+**[品質]警告**(出力品質基準の内容レベル検査11種=品質改善パスの対象特定)+**score_total/score_sum_*4種の自動計算**。④の手書き編集は禁止 |
 | `scripts/build_matching_html.py` | マッチングExcel→閲覧用HTMLレポート(能力3)。`--in/--out/--title/--subtitle` |
 | `scripts/matching_html_style.css` | HTMLレポートのスタイル(見た目調整用) |
 | `scripts/matching_html_app.js` | HTMLレポートのフィルタ挙動(アセット一覧クリック絞り込み) |

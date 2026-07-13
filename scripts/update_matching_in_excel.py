@@ -176,40 +176,118 @@ def main():
             if not r.get(req):
                 warns.add(f"行{i}: 必須フィールド '{req}' が空")
 
-    # [品質]警告: 書き込みは止めないが、SKILL.md「品質改善パス」(最大3回)の対象行特定に使う
-    import re
-    n_abc = n_smry = n_rat = n_ph = 0
-    score_patterns = set()
-    main_scores = [f for f in SCORE_FIELDS
+    # スコアの自動導出: score_total=9軸平均 / score_sum_*4種=本編スコアの転記。
+    # モデルに算術をさせない(記入値があっても計算値で上書き)。JSONLでは省略してよい
+    MAIN_SCORES = [f for f in SCORE_FIELDS
                    if not f.startswith(("_", "score_sum_")) and f != "score_total"]
+    SUM_SCORE_MAP = {"score_sum_uniqueness": "score_novelty",
+                     "score_sum_mission": "score_mission_fit",
+                     "score_sum_market_size": "score_market_size",
+                     "score_sum_growth": "score_cagr"}
+    n_drv = 0
+    for r in recs:
+        vals = [r.get(f) for f in MAIN_SCORES]
+        if all(isinstance(v, float) for v in vals):
+            total = round(sum(vals) / len(vals), 1)
+            if r.get("score_total") != total:
+                n_drv += 1
+            r["score_total"] = total
+        for sf, mf in SUM_SCORE_MAP.items():
+            if isinstance(r.get(mf), float):
+                r[sf] = r[mf]
+    if n_drv:
+        warns.add(f"score_totalを9軸平均で再計算し{n_drv}件を上書き(score_sum_*4種も本編スコアから自動転記)")
+
+    # [品質]警告(内容レベル): 書き込みは止めないが、SKILL.md「品質改善パス」の対象行特定に使う。
+    # 基準はSKILL.md「出力品質基準」(良品サンプルの実測レンジ)に対応
+    import re
+    n_abc = n_smry = n_ph = n_ban = n_len = n_title = n_risk = n_int = n_slug = 0
+    score_patterns, score_shapes, ranks_seen = set(), set(), set()
     # 「後で埋める」つもりの定型プレースホルダー。空欄(=事実性の鉄則で正)とは別に検出する
     PLACEHOLDER_RE = re.compile(r"(詳細分析|後で|追って|TBD|todo|要検討|検討中|分析中|予定|要記入|未記入)", re.I)
     PLACEHOLDER_FIELDS = ("core_improvement", "key_risks", "unused_reason_barriers",
                           "market_size_detail", "cagr_detail")
+    # 禁止語(定型文の兆候)と、良品サンプル実測レンジに基づく文字数フロア
+    BANNED = ("相乗効果", "技術融合", "唯一の実現", "による課題解決", "協業による事業展開")
+    BAN_FIELDS = ("summary", "solution", "idea_strength")
+    LEN_FLOORS = {"summary": 120, "pain": 70, "solution": 80,
+                  "idea_strength": 50, "agent_rationale": 150}
+    THINK_FIELDS = ("pain", "solution", "idea_strength", "summary", "agent_rationale")
+    # スラッグ漏れ検出で除外する正規の軸名・フィールド名(思考根拠での言及は正当)
+    LEGIT_TOKENS = sorted(set(list(SCORE_FIELDS) + list(CANONICAL) +
+                              ["asset_fit", "pain_fit", "tech_feasibility", "mission_fit",
+                               "industry_advantage", "industry_pain_fit", "score_total"]),
+                          key=len, reverse=True)
+    LEGIT_RE = re.compile("|".join(re.escape(t) for t in LEGIT_TOKENS if t))
+    dup_seen = {}  # (field, 正規化文) -> 出現行数。企業名を差し替えただけのコピペを検出
     for r in recs:
         rat = str(r.get("agent_rationale") or "")
         if rat and not re.search(r"[(（][abc][)）]", rat):
             n_abc += 1  # 原則2: どの判定式を満たすかの明記が必須
-        if rat and len(rat) < 60:
-            n_rat += 1  # 原則3: 5観点groundingがあれば60字を下回らない
         smry = str(r.get("summary") or "")
         if smry and (len(smry) < 30 or "協業による事業展開" in smry):
             n_smry += 1
-        # プレースホルダー検出: 空欄は許容(事実不明ならnullが正)だが、仮テキストは中身が無いのと同じ
         if any(PLACEHOLDER_RE.search(str(r.get(f) or "")) for f in PLACEHOLDER_FIELDS):
             n_ph += 1
-        score_patterns.add(tuple(r.get(f) for f in main_scores))
+        if any(b in str(r.get(f) or "") for f in BAN_FIELDS for b in BANNED):
+            n_ban += 1
+        if any(r.get(f) and len(str(r.get(f))) < floor for f, floor in LEN_FLOORS.items()):
+            n_len += 1
+        if "×" in str(r.get("title") or ""):
+            n_title += 1  # タイトルは成果物を名指す(「X × Y」機械結合は不可)
+        kr = str(r.get("key_risks") or "")
+        if kr and ("①" not in kr or "②" not in kr):
+            n_risk += 1  # 主要リスクは①②③の番号列挙で3〜4件
+        svals = [r.get(f) for f in MAIN_SCORES if isinstance(r.get(f), float)]
+        if any(v != int(v) for v in svals):
+            n_int += 1  # 9軸スコアは0-10の整数
+        if any(re.search(r"[a-z]+_[a-z]+", LEGIT_RE.sub("", str(r.get(f) or "")))
+               for f in THINK_FIELDS):
+            n_slug += 1  # 英語スラッグ(some_asset_slug等)の本文への漏れ(正規の軸名言及は除外)
+        # 行間コピペ検出: 企業名・アセット名を除去した思考フィールドが他行と一致したら定型量産
+        names = [str(r.get("startup_name") or ""), str(r.get("asset_id") or "")]
+        for f in THINK_FIELDS:
+            t = str(r.get(f) or "")
+            for nm in names:
+                if nm:
+                    t = t.replace(nm, "")
+            t = re.sub(r"\s+", "", t)
+            if len(t) >= 20:
+                dup_seen[(f, t)] = dup_seen.get((f, t), 0) + 1
+        if svals:
+            score_patterns.add(tuple(svals))
+            m = sum(svals) / len(svals)
+            score_shapes.add(tuple(round(v - m, 1) for v in svals))  # 平均を引いた「形」
+        t = r.get("score_total")
+        ranks_seen.add(rank_of(t if isinstance(t, float) else None))
+    n_dup = sum(c for c in dup_seen.values() if c >= 2)
     if n_abc:
         warns.add(f"[品質] 思考根拠に原則2のa/b/c判定の明記がない行が{n_abc}件")
-    if n_rat:
-        warns.add(f"[品質] 思考根拠が短く具体性を欠く行(60字未満)が{n_rat}件")
     if n_smry:
         warns.add(f"[品質] 概要が定型文または30字未満の行が{n_smry}件")
     if n_ph:
         warns.add(f"[品質] 採用障壁/改善点/主要リスク/市場規模詳細等に定型プレースホルダー"
                   f"(『詳細分析』『予定』等)が残る行が{n_ph}件(中身を書くか、事実不明なら空欄に)")
+    if n_ban:
+        warns.add(f"[品質] 概要/解決方法/強みに禁止語(相乗効果・技術融合・唯一の実現・による課題解決等)を含む行が{n_ban}件")
+    if n_len:
+        warns.add(f"[品質] 文字数が品質基準レンジ未満の行が{n_len}件(概要<120/課題<70/解決<80/強み<50/根拠<150字)")
+    if n_title:
+        warns.add(f"[品質] タイトルが「X × Y」機械結合の行が{n_title}件(協業の成果物を名指すこと)")
+    if n_risk:
+        warns.add(f"[品質] 主要リスクが①②の番号列挙になっていない行が{n_risk}件(3〜4件を列挙)")
+    if n_int:
+        warns.add(f"[品質] 9軸スコアに非整数を含む行が{n_int}件(0-10の整数で採点)")
+    if n_slug:
+        warns.add(f"[品質] 本文に英語スラッグ(snake_case)が漏れている行が{n_slug}件")
+    if n_dup:
+        warns.add(f"[品質] 企業名を差し替えただけの行間コピペが{n_dup}箇所(課題/解決/強み/概要/根拠は行ごとに固有の内容)")
     if len(recs) >= 3 and len(score_patterns) == 1:
         warns.add(f"[品質] 全{len(recs)}行のスコアが同一パターン(個別評価が行われていない疑い)")
+    elif len(recs) >= 5 and len(score_shapes) == 1:
+        warns.add(f"[品質] 全{len(recs)}行のスコアが同一の形(定数オフセットの等差列。個別評価が行われていない疑い)")
+    if len(recs) >= 5 and len(ranks_seen - {None}) == 1:
+        warns.add(f"[品質] 全{len(recs)}行が同一ランク(正直採点ならランクは分布する。無理にBに乗せない)")
 
     wb = openpyxl.load_workbook(a.xlsx)
     db_ws = find_sheet(wb, "スタートアップDB")
